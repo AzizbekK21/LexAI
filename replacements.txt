@@ -1,0 +1,3 @@
+sk-                your-openai-api-key
+AIza               your-google-client-id
+gcs                your-google-client-secret
