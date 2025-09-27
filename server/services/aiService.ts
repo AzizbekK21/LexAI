@@ -8,13 +8,11 @@ interface AIRequestOptions {
   conversationId?: string;
   userId: string;
   planType: "free" | "premium";
-  attachments?: Array<{
-    name: string;
-    type: string;
-    size: number;
-  }>;
+  attachments?: Array<{ name: string; type: string; size: number }>;
   context?: string;
+  lawMatches?: Array<{ article: string; text: string; source: string }>;
 }
+
 
 interface AIResponse {
   content: string;
@@ -130,33 +128,24 @@ class AIService {
 
   private buildSystemPrompt(options: AIRequestOptions): string {
     let prompt = LEGAL_PROMPTS.system;
-    if ((global as any).__lawMatches && Array.isArray((global as any).__lawMatches)) {
-      const laws = (global as any).__lawMatches as {
-        article: string;
-        text: string;
-        source: string;
-      }[];
 
-      if (laws.length > 0) {
-        prompt += `\n\nThe following official laws were found based on the user's message:\n\n`;
-        for (const law of laws) {
-          prompt += `• **Article ${law.article}** — ${law.text}\n(Source: ${law.source})\n\n`;
-        }
+    const laws = options.lawMatches ?? [];
+    if (laws.length > 0) {
+      prompt += `\n\nThe following official laws were found based on the user's message:\n\n`;
+      for (const law of laws) {
+        prompt += `• **Article ${law.article}** — ${law.text}\n(Source: ${law.source})\n\n`;
       }
     }
 
-    // Add plan-specific instructions
     if (options.planType === "premium") {
       prompt += "\n\nYou are operating in PREMIUM mode with access to advanced legal analysis capabilities. Provide comprehensive, detailed responses with citations and precedent references where applicable.";
     } else {
       prompt += "\n\nYou are operating in FREE mode. Provide helpful but concise responses. For complex legal matters, recommend upgrading to Premium for detailed analysis.";
     }
 
-    // Add document analysis context if attachments are present
     if (options.attachments && options.attachments.length > 0) {
       prompt += "\n\nThe user has attached documents for analysis. Incorporate document-specific insights into your response.";
     }
-
     return prompt;
   }
 

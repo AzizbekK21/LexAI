@@ -1,4 +1,3 @@
-// server/passport.ts
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import { storage } from "./storage"; // ты уже используешь storage
@@ -20,11 +19,13 @@ passport.deserializeUser(async (id: string, done) => {
 
 passport.use(new GoogleStrategy(
   {
-    clientID: process.env.GOOGLE_CLIENT_ID!, // из `.env`
+    clientID: process.env.GOOGLE_CLIENT_ID!,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-    callbackURL: "http://localhost:5000/api/auth/google/callback", // локальный редирект
+    callbackURL:
+      process.env.GOOGLE_CALLBACK_URL ??
+      `${process.env.PUBLIC_URL || "http://localhost:5000"}/api/auth/google/callback`,
   },
-  async (accessToken, refreshToken, profile, done) => {
+  async (_accessToken, _refreshToken, profile, done) => {
     try {
       const email = profile.emails?.[0]?.value;
       const firstName = profile.name?.givenName;
@@ -34,7 +35,6 @@ passport.use(new GoogleStrategy(
       if (!email) return done(new Error("No email from Google"), false);
 
       let user = await storage.getUserByEmail(email);
-
       if (!user) {
         user = await storage.createUser({
           id: generateUserId(),
@@ -44,7 +44,6 @@ passport.use(new GoogleStrategy(
           profileImageUrl,
         });
       }
-
       done(null, user);
     } catch (error) {
       done(error);

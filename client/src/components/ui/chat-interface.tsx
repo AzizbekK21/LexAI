@@ -6,6 +6,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ThinkingLogo, AnimatedLogo } from "@/components/ui/animated-logo";
 import { cn } from "@/lib/utils";
+import ReactMarkdown, { Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkBreaks from "remark-breaks";
+import rehypeRaw from "rehype-raw";
+import rehypeHighlight from "rehype-highlight";
+import "highlight.js/styles/github.css";
 
 interface Message {
   id: string;
@@ -17,6 +23,51 @@ interface Message {
     type: string;
     size: number;
   }>;
+}
+
+interface MarkdownProps {
+  content: string;
+}
+
+export function MarkdownRenderer({ content }: MarkdownProps) {
+  return (
+    <div className="prose prose-sm max-w-full break-words dark:prose-invert">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkBreaks]}
+        rehypePlugins={[rehypeRaw, rehypeHighlight]}
+        components={{
+          p: ({ node, children, ...props }) => (
+            <p
+              className="text-sm leading-relaxed whitespace-pre-wrap mb-2"
+              {...props}
+            >
+              {children}
+            </p>
+          ),
+          code({ node, className, children, ...props }) {
+            return (
+              <code
+                className={`bg-secondary/30 rounded px-1 py-0.5 text-sm font-mono ${className || ""}`}
+                {...props}
+              >
+                {children}
+              </code>
+            );
+          },
+          pre: ({ node, children, ...props }) => (
+            <pre
+              className="bg-gray-100 dark:bg-gray-800 rounded p-2 overflow-x-auto text-sm mb-2"
+              {...props}
+            >
+              {children}
+            </pre>
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 interface ChatInterfaceProps {
@@ -211,9 +262,37 @@ function MessageBubble({ message }: { message: Message }) {
           ? "bg-primary text-primary-foreground rounded-tr-none" 
           : "glass-morphism rounded-tl-none"
       )}>
-        <p className="text-sm leading-relaxed whitespace-pre-wrap">
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm, remarkBreaks]}
+          rehypePlugins={[rehypeRaw, rehypeHighlight]}
+          components={{
+            p: ({ node, children, ...props }) => (
+              <p className="text-sm leading-relaxed whitespace-pre-wrap mb-2" {...props}>
+                {children}
+              </p>
+            ),
+            code({ node, className, children, ...props }) {
+              return (
+                <code
+                  className={`bg-secondary/30 rounded px-1 py-0.5 text-sm font-mono ${className || ""}`}
+                  {...props}
+                >
+                  {children}
+                </code>
+              );
+            },
+            pre: ({ node, children, ...props }) => (
+              <pre
+                className="bg-gray-100 dark:bg-gray-800 rounded p-2 overflow-x-auto text-sm mb-2"
+                {...props}
+              >
+                {children}
+              </pre>
+            ),
+          }}
+        >
           {message.content}
-        </p>
+        </ReactMarkdown>
         
         {message.attachments && message.attachments.length > 0 && (
           <div className="mt-2 space-y-1">

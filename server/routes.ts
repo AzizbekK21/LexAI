@@ -9,7 +9,9 @@ import { z } from "zod";
 import { authenticateUser, registerUser } from "./auth";
 import passport from "passport";
 import { searchLaws } from "./services/lawSearchService";
-import cookie from 'cookie';
+import cookie from "cookie";
+import crypto from "crypto";
+import signature from "cookie-signature";
 import { promisify } from 'util';
 import { getLawByCountryAndArticle } from "./services/lawService";
 import './passport';
@@ -21,22 +23,6 @@ declare module 'express-session' {
   }
 }
 
-function generateTitleFromContent(content: string): string {
-  const firstSentence = content.split(/[.?!]/)[0];
-  return firstSentence.length > 50
-    ? firstSentence.slice(0, 47).trim() + "..."
-    : firstSentence.trim() || "Legal Consultation";
-}
-
-function determineCategoryFromContent(content: string): "general" | "contract" | "employment" | "criminal" | "business" {
-  const lower = content.toLowerCase();
-  if (lower.includes("contract") || lower.includes("agreement")) return "contract";
-  if (lower.includes("employee") || lower.includes("salary") || lower.includes("termination")) return "employment";
-  if (lower.includes("crime") || lower.includes("police") || lower.includes("prosecutor")) return "criminal";
-  if (lower.includes("startup") || lower.includes("incorporate") || lower.includes("founder")) return "business";
-  return "general";
-}
-
 const chatMessageSchema = z.object({
   message: z.string().max(4000).optional(),
   conversationId: z.string().optional(),
@@ -45,6 +31,8 @@ const chatMessageSchema = z.object({
     type: z.string(),
     size: z.number(),
   })).optional(),
+}).refine(data => (data.message && data.message.trim()) || (data.attachments && data.attachments.length > 0), {
+  message: "Message or attachments required"
 });
 
 const usageIncrementSchema = z.object({
@@ -56,24 +44,33 @@ let sessionStore: session.Store;
 function setupSession(app: Express) {
   const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
   const pgStore = connectPg(session);
+
+  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
+  if (!process.env.SESSION_SECRET) throw new Error("SESSION_SECRET is required");
+
   sessionStore = new pgStore({
     conString: process.env.DATABASE_URL,
-    createTableIfMissing: false,
+    createTableIfMissing: true,
     ttl: sessionTtl,
     tableName: "sessions",
   });
 
-  app.use(session({
-    secret: process.env.SESSION_SECRET || 'your-session-secret-here',
-    store: sessionStore,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      maxAge: sessionTtl,
-    },
-  }));
+  app.use(
+    session({
+      name: "sid",
+      secret: process.env.SESSION_SECRET,
+      store: sessionStore,
+      resave: false,
+      rolling: true,
+      saveUninitialized: false,
+      cookie: {
+        httpOnly: true,
+        sameSite: process.env.NODE_ENV === "production" ? "lax" : "lax",
+        secure: process.env.NODE_ENV === "production",
+        maxAge: sessionTtl,
+      },
+    })
+  ); 
 }
 
 const requireAuth = (req: any, res: any, next: any) => {
@@ -82,20 +79,6 @@ const requireAuth = (req: any, res: any, next: any) => {
   }
   next();
 };
-
-function getUserIdFromSession(req: any): Promise<string | null> {
-  const cookies = cookie.parse(req.headers.cookie || '');
-  const sid = cookies['connect.sid'];
-
-  if (!sid) return Promise.resolve(null);
-
-  return new Promise((resolve) => {
-    sessionStore.get(sid, (err, session) => {
-      if (err || !session?.userId) return resolve(null);
-      resolve(session.userId);
-    });
-  });
-}
 
 export async function registerRoutes(app: Express): Promise<Server> {
   setupSession(app);
@@ -177,7 +160,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (req.user) {
         req.session.userId = (req.user as any).id;
       }
-      res.redirect('/'); // Или куда хочешь, например: /dashboard
+      res.redirect('/');
     }
   );
 
@@ -240,11 +223,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const results = await searchLaws(country, query);
       res.json(results);
     } catch (error) {
-      res.status(500).json({ message: "Ошибка при поиске закона", error: error.message });
+      const err = error as Error;
+      res.status(500).json({ message: "Ошибка при поиске закона", error: err.message });
     }
   });
 
-  // Chat endpoints
   app.post("/api/chat", async (req, res) => {
     try {
       const { message, conversationId, attachments } = chatMessageSchema.parse(req.body);
@@ -304,43 +287,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
         metadata: aiResponse.metadata,
       });
 
-      // If it's the first message (i.e., only 1 user + 1 assistant), generate title + category
-      const allMessages = await storage.getConversationMessages(conversation.id);
-      if (allMessages.length === 2) {
-        const firstAiReply = aiResponse.content;
+      // Автоматическое обновление title и category после первой AI-реплики
+      if (conversation.title.toLowerCase().startsWith("new conversation")) {
+          const titlePrompt = `Create a short, snappy, and descriptive headline for this text. Maximum 25 characters: "${aiResponse.content}"`;
+          const categoryPrompt = `Define a category for this text. Possible options: general, contract, employment, criminal, business. Text: "${aiResponse.content}"`;
 
-        const generatedTitle = firstAiReply.slice(0, 60).replace(/\s+/g, " ").trim();
-        const lower = firstAiReply.toLowerCase();
+          // Генерация title через ИИ
+          let generatedTitle = (await aiService.generateResponse(titlePrompt, { 
+              conversationId: conversation.id, 
+              userId, 
+              planType: usage.planType as "free" | "premium" 
+          })).content.trim();
 
-        let detectedCategory: "general" | "contract" | "employment" | "criminal" | "business" = "general";
-        if (lower.includes("contract") || lower.includes("agreement")) detectedCategory = "contract";
-        else if (lower.includes("employment") || lower.includes("job") || lower.includes("hire")) detectedCategory = "employment";
-        else if (lower.includes("crime") || lower.includes("police") || lower.includes("arrest") || lower.includes("criminal")) detectedCategory = "criminal";
-        else if (lower.includes("business") || lower.includes("startup") || lower.includes("company")) detectedCategory = "business";
+          // Контроль длины на всякий случай
+          if (generatedTitle.length > 25) {
+              generatedTitle = generatedTitle.slice(0, 25).trim();
+          }
 
-        await storage.updateConversationMetadata(conversation.id, {
-          title: generatedTitle,
-          category: detectedCategory,
-        });
+          // Генерация категории через ИИ
+          let detectedCategory = (await aiService.generateResponse(categoryPrompt, { 
+              conversationId: conversation.id, 
+              userId, 
+              planType: usage.planType as "free" | "premium" 
+          })).content.toLowerCase().trim() as "general" | "contract" | "employment" | "criminal" | "business";
 
-        // Also update it in memory
-        conversation.title = generatedTitle;
-        conversation.category = detectedCategory;
-      }
+          // Проверка на корректность категории
+          const validCategories = ["general", "contract", "employment", "criminal", "business"];
+          if (!validCategories.includes(detectedCategory)) detectedCategory = "general";
 
-      // Автоматическое обновление title и category
-      if (conversation.title === "New conversation") {
-        const newTitle = generateTitleFromContent(aiResponse.content);
-        const newCategory = determineCategoryFromContent(aiResponse.content);
+          // Сохранение в БД
+          await storage.updateConversation(conversation.id, {
+              title: generatedTitle,
+              category: detectedCategory,
+          });
 
-        await storage.updateConversation(conversation.id, {
-          title: newTitle,
-          category: newCategory,
-        });
-
-        // Обновим в памяти, чтобы вернуть в ответ
-        conversation.title = newTitle;
-        conversation.category = newCategory;
+          // Обновление в памяти для ответа
+          conversation.title = generatedTitle;
+          conversation.category = detectedCategory;
       }
 
       // Increment usage
@@ -409,7 +392,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/conversations/:id/messages", async (req, res) => {
     try {
+      const userId = req.session?.userId;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
       const { id } = req.params;
+      const convo = await storage.getConversation(id);
+      if (!convo || convo.userId !== userId) {
+        return res.status(404).json({ message: "Not found" });
+      }
+
       const messages = await storage.getConversationMessages(id);
       res.json(messages);
     } catch (error) {
@@ -487,91 +478,184 @@ export async function registerRoutes(app: Express): Promise<Server> {
     path: '/ws'
   });
 
-  const activeConnections = new Map<string, WebSocket>();
+  type ConnectionInfo = { ws: WebSocket; userId: string; rooms: Set<string> };
+  const connections = new Map<string, ConnectionInfo>();
+  const rooms = new Map<string, Set<string>>(); // conversationId -> Set<connectionId>
 
-  wss.on('connection', async (ws, req) => {
+  function joinRoom(connectionId: string, conversationId: string) {
+    const roomSet = rooms.get(conversationId) ?? new Set<string>();
+    roomSet.add(connectionId);
+    rooms.set(conversationId, roomSet);
+
+    const info = connections.get(connectionId);
+    if (info) info.rooms.add(conversationId);
+  }
+
+  function leaveAllRooms(connectionId: string): void {
+    const info = connections.get(connectionId);
+    if (!info) return; // безопасная проверка
+
+    Array.from(info.rooms).forEach((roomId) => {
+      const roomSet = rooms.get(roomId);
+      if (!roomSet) return;
+      roomSet.delete(connectionId);
+      if (roomSet.size === 0) rooms.delete(roomId);
+    });
+
+    // очистим набор комнат у этого соединения
+    info.rooms.clear();
+  }
+
+  function broadcastToConversation(conversationId: string, message: any, excludeId?: string): void {
+    const roomSet = rooms.get(conversationId);
+    if (!roomSet) return;
+    Array.from(roomSet).forEach((cid) => {
+      if (cid === excludeId) return;
+      const conn = connections.get(cid);
+      if (conn && conn.ws && conn.ws.readyState === WebSocket.OPEN) {
+        try {
+          conn.ws.send(JSON.stringify(message));
+        } catch (err) {
+          console.error("Failed to send WS message:", err);
+        }
+      }
+    });
+  }
+
+  async function getUserIdFromSession(req: any): Promise<string | null> {
+    try {
+      const cookies = cookie.parse(req.headers?.cookie || "");
+      // поддержка как имени cookie 'sid' (у тебя в session name: "sid"), так и 'connect.sid' (по умолчанию)
+      const raw = cookies["sid"] ?? cookies["connect.sid"];
+      if (!raw) return null;
+
+      let sid = raw;
+
+      // Если cookie подписана (формат "s:<signedValue>"), убираем подпись корректно
+      if (typeof sid === "string" && sid.startsWith("s:")) {
+        const signedPart = sid.slice(2); // убираем "s:"
+        const unsigned = signature.unsign(signedPart, process.env.SESSION_SECRET || "");
+        if (!unsigned) {
+          // подпись не прошла проверку
+          return null;
+        }
+        sid = unsigned;
+      }
+
+      // Промисифицируем sessionStore.get
+      const getAsync = promisify(sessionStore.get.bind(sessionStore));
+      const sess = await getAsync(sid);
+      return sess?.userId ?? null;
+    } catch (err) {
+      console.error("getUserIdFromSession error:", err);
+      return null;
+    }
+  }
+
+  wss.on("connection", async (ws, req) => {
     const userId = await getUserIdFromSession(req);
-
     if (!userId) {
       ws.close(4001, "Unauthorized");
       return;
     }
-    
-    // Generate connection ID
-    const connectionId = Date.now().toString();
-    activeConnections.set(connectionId, ws);
 
-    ws.on('message', async (data: Buffer) => {
+    const connectionId = crypto.randomUUID();
+    // ИНИЦИАЛИЗИРУЕМ rooms прямо здесь:
+    connections.set(connectionId, { ws, userId, rooms: new Set<string>() });
+
+    ws.on("message", async (data: Buffer) => {
       try {
         const message = JSON.parse(data.toString());
-        
-        switch (message.type) {
-          case 'send_message':
-            // Handle real-time chat message
-            const { conversationId, content } = message.data;
-            
-            // Broadcast typing indicator to other clients
-            broadcastToConversation(conversationId, {
-              type: 'typing_start',
-              data: { userId }
-            }, connectionId);
 
-            // Get AI response
+        switch (message.type) {
+          case "join_conversation": {
+            const { conversationId } = message.data;
+            // проверяем права на беседу
+            const convo = await storage.getConversation(conversationId);
+            if (!convo || convo.userId !== userId) {
+              ws.send(JSON.stringify({ type: "error", data: { message: "Access denied" } }));
+              return;
+            }
+            joinRoom(connectionId, conversationId);
+            return;
+          }
+
+          case "send_message": {
+            const { conversationId, content } = message.data;
+            const usage = await storage.getUserUsage(userId);
+            if (usage.current >= usage.limit) {
+              ws.send(JSON.stringify({ type: "error", data: { message: "Usage limit exceeded", usage } }));
+              return;
+            }
+            const newUsage = await storage.incrementUsage(userId, 1);
+            ws.send(JSON.stringify({ type: "usage_update", data: newUsage }));
+
+            // проверка владения беседой
+            const convo = await storage.getConversation(conversationId);
+            if (!convo || convo.userId !== userId) {
+              ws.send(JSON.stringify({ type: "error", data: { message: "Access denied" } }));
+              return;
+            }
+
+            broadcastToConversation(conversationId, { type: "typing_start", data: { userId } }, connectionId);
+            
+            const lawMatches = (typeof searchLaws === "function") ? await searchLaws("TJ", content) : [];
+
             const aiResponse = await aiService.generateResponse(content, {
               conversationId,
               userId,
-              planType: 'free',
+              planType: "free",
+              lawMatches,
             });
 
-            // Stop typing indicator
+            await storage.createMessage({
+              conversationId,
+              role: "assistant",
+              content: aiResponse.content,
+              metadata: aiResponse.metadata,
+            });
+
+            broadcastToConversation(conversationId, { type: "typing_stop", data: { userId } }, connectionId);
+
             broadcastToConversation(conversationId, {
-              type: 'typing_stop', 
-              data: { userId }
-            }, connectionId);
+              type: "new_message",
+              data: {
+                id: Date.now().toString(),
+                conversationId,
+                role: "assistant",
+                content: aiResponse.content,
+                timestamp: new Date().toISOString(),
+              },
+            });
 
-            // Send AI response
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({
-                type: 'new_message',
-                data: {
-                  id: Date.now().toString(),
-                  conversationId,
-                  role: 'assistant',
-                  content: aiResponse.content,
-                  timestamp: new Date().toISOString(),
-                }
-              }));
-            }
-            break;
+            return;
+          }
 
-          case 'typing_start':
-          case 'typing_stop':
-            // Broadcast typing indicators
-            broadcastToConversation(message.data.conversationId, message, connectionId);
-            break;
+          case "typing_start":
+          case "typing_stop": {
+            const { conversationId } = message.data;
+            broadcastToConversation(conversationId, message, connectionId);
+            return;
+          }
+
+          default:
+            ws.send(JSON.stringify({ type: "error", data: { message: "Unknown message type" } }));
         }
       } catch (error) {
-        console.error('WebSocket message error:', error);
+        console.error("WebSocket message error:", error);
+        try { ws.send(JSON.stringify({ type: "error", data: { message: "Server error" } })); } catch {}
       }
     });
 
-    ws.on('close', () => {
-      console.log('WebSocket connection closed');
-      activeConnections.delete(connectionId);
+    ws.on("close", () => {
+      leaveAllRooms(connectionId);
+      connections.delete(connectionId);
     });
 
-    ws.on('error', (error) => {
-      console.error('WebSocket error:', error);
+    ws.on("error", (err) => {
+      console.error("WebSocket error:", err);
     });
   });
-
-  function broadcastToConversation(conversationId: string, message: any, excludeConnectionId?: string) {
-    activeConnections.forEach((connection, connectionId) => {
-      if (connectionId !== excludeConnectionId && connection.readyState === WebSocket.OPEN) {
-        connection.send(JSON.stringify(message));
-      }
-    });
-  }
 
   return httpServer;
 }

@@ -165,11 +165,14 @@ class OpenAIService {
 
   async transcribeAudio(audioBuffer: Buffer, options: { language?: string } = {}): Promise<string> {
     try {
-      // Create a temporary file-like object
-      const file = new File([audioBuffer], "audio.webm", { type: "audio/webm" });
+      // Преобразуем Buffer в ReadStream
+      const { Readable } = require('stream');
+      const audioStream = new Readable();
+      audioStream.push(audioBuffer);
+      audioStream.push(null);
 
       const response = await this.client.audio.transcriptions.create({
-        file: file,
+        file: audioStream as any, // Временное решение для типизации
         model: "whisper-1",
         language: options.language || "en",
         response_format: "text",
