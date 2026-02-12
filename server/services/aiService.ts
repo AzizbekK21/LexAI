@@ -2,7 +2,6 @@ import { openaiService } from "./openaiService";
 import { openrouterService } from "./openrouterService";
 import { LEGAL_PROMPTS } from "@/lib/constants";
 import { openai } from "../lib/openai";
-import { searchLaws } from "./lawSearchService";
 
 interface AIRequestOptions {
   conversationId?: string;
@@ -50,22 +49,12 @@ class AIService {
     try {
       // Choose AI service based on plan type
       const useOpenAI = options.planType === "premium";
-      const lawMatches = await searchLaws("TJ", message);
       
       // Prepare the prompt with legal context
       let systemPrompt = this.buildSystemPrompt(options);
       const userPrompt = this.buildUserPrompt(message, options);
 
-      try {
-        const lawMatches = await searchLaws("TJ", message); // TODO: заменить "TJ" на выбранную страну
-
-        if (lawMatches.length > 0) {
-          systemPrompt += "\n\nВот найденные законы из официальных источников:\n\n" +
-            lawMatches.map(l => `• **Статья ${l.article}**: ${l.text}\n(Источник: ${l.source})`).join("\n\n");
-        }
-      } catch (err) {
-        console.warn("Не удалось получить статьи закона:", err);
-      }
+      // Law matches should be provided by the caller via options.lawMatches (no internal fetching here)
 
       let response: AIResponse;
 

@@ -491,6 +491,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (info) info.rooms.add(conversationId);
   }
 
+  function leaveRoom(connectionId: string, conversationId: string) {
+    const roomSet = rooms.get(conversationId);
+    if (!roomSet) return;
+    roomSet.delete(connectionId);
+    if (roomSet.size === 0) rooms.delete(conversationId);
+
+    const info = connections.get(connectionId);
+    if (info) info.rooms.delete(conversationId);
+  }
+
   function leaveAllRooms(connectionId: string): void {
     const info = connections.get(connectionId);
     if (!info) return; // безопасная проверка
@@ -577,6 +587,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
               return;
             }
             joinRoom(connectionId, conversationId);
+            return;
+          }
+          case "leave_conversation": {
+            const { conversationId } = message.data;
+            leaveRoom(connectionId, conversationId);
             return;
           }
 

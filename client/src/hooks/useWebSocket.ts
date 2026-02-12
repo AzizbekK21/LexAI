@@ -166,6 +166,14 @@ export function useRealTimeChat(conversationId?: string) {
     onMessage: handleMessage,
   });
 
+  useEffect(() => {
+    if (!conversationId || !isConnected) return;
+    sendMessage({ type: "join_conversation", data: { conversationId } });
+    return () => {
+      sendMessage({ type: "leave_conversation", data: { conversationId } });
+    };
+  }, [conversationId, isConnected]);
+
   const sendChatMessage = (content: string) => {
     return sendMessage({
       type: "send_message",

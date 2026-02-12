@@ -34,7 +34,7 @@ export function MarkdownRenderer({ content }: MarkdownProps) {
     <div className="prose prose-sm max-w-full break-words dark:prose-invert">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
-        rehypePlugins={[rehypeRaw, rehypeHighlight]}
+        rehypePlugins={[rehypeHighlight]}
         components={{
           p: ({ node, children, ...props }) => (
             <p

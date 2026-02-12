@@ -20,7 +20,10 @@ class OpenRouterService {
   private baseUrl: string = "https://openrouter.ai/api/v1";
 
   constructor() {
-    this.apiKey = process.env.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEY_ENV_VAR || "default_key";
+    this.apiKey = process.env.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEY_ENV_VAR || "";
+    if (!this.apiKey) {
+      throw new Error("OPENROUTER_API_KEY environment variable is required");
+    }
   }
 
   async generateResponse(prompt: string, options: OpenRouterOptions = {}): Promise<OpenRouterResponse> {
