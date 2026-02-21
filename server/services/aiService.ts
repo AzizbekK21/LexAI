@@ -73,7 +73,7 @@ class AIService {
           if (error.message.includes("429") || error.message.includes("quota")) {
             response = await openrouterService.generateResponse(userPrompt, {
               systemPrompt,
-              model: "mistralai/mistral-small-24b-instruct-2501:free",
+              model: "deepseek/deepseek-r1-0528:free",
               maxTokens: 1024,
               temperature: 0.3,
             });
@@ -84,7 +84,7 @@ class AIService {
       } else {
         response = await openrouterService.generateResponse(userPrompt, {
           systemPrompt,
-          model: "mistralai/mistral-small-24b-instruct-2501:free",
+          model: "deepseek/deepseek-r1-0528:free",
           maxTokens: 1024,
           temperature: 0.3,
         });

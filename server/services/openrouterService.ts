@@ -53,7 +53,7 @@ class OpenRouterService {
           "X-Title": "LexAI - AI Legal Assistant",
         },
         body: JSON.stringify({
-          model: options.model || "mistralai/mistral-small-24b-instruct-2501:free",
+          model: options.model || "deepseek/deepseek-r1-0528:free",
           messages,
           max_tokens: options.maxTokens || 1024,
           temperature: options.temperature || 0.3,
@@ -111,7 +111,7 @@ class OpenRouterService {
           "X-Title": "LexAI - AI Legal Assistant",
         },
         body: JSON.stringify({
-          model: options.model || "mistralai/mistral-small-24b-instruct-2501:free",
+          model: options.model || "deepseek/deepseek-r1-0528:free",
           messages,
           max_tokens: options.maxTokens || 1024,
           temperature: options.temperature || 0.1,
